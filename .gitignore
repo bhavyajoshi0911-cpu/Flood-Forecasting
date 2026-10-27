@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local databases and runtime files
+*.db
+*.sqlite3
+*.log
+
+# Data and model artifacts
+# Keep metadata and documentation tracked, but do not commit downloaded source data by default.
+data/raw/*
+data/processed/*
+models/*
+
+# Frontend
+node_modules/
+dist/
+
+# Notebooks
+.ipynb_checkpoints/

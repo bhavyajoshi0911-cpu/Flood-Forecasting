@@ -1,0 +1,44 @@
+{
+  "original_rows": 167,
+  "training_rows": 133,
+  "testing_rows": 34,
+  "training_percentage": 79.64,
+  "testing_percentage": 20.36,
+  "training_start": "2020-07-13T00:00:00",
+  "training_end": "2020-10-14T00:00:00",
+  "testing_start": "2020-10-15T00:00:00",
+  "testing_end": "2020-12-08T00:00:00",
+  "number_of_features": 68,
+  "target_column": "future_flood_observed_research",
+  "datetime_column": "date",
+  "rows_removed": 0,
+  "data_leakage": {
+    "target_in_features": "PASS",
+    "future_information_in_features": "PASS",
+    "train_test_overlap": "PASS",
+    "chronological_order": "PASS",
+    "random_shuffle": "PASS"
+  },
+  "temporal_separation": true,
+  "source_file": "C:\\Users\\DELL\\OneDrive\\Desktop\\Python Projects\\Flood Forcasting\\backend\\data\\engineered_flood_dataset.csv",
+  "train_target_distribution": {
+    "0.0": {
+      "count": 96,
+      "percentage": 72.18
+    },
+    "1.0": {
+      "count": 37,
+      "percentage": 27.82
+    }
+  },
+  "test_target_distribution": {
+    "0.0": {
+      "count": 23,
+      "percentage": 67.65
+    },
+    "1.0": {
+      "count": 11,
+      "percentage": 32.35
+    }
+  }
+}

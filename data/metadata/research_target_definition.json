@@ -1,0 +1,36 @@
+{
+  "mode": "threshold",
+  "authoritative": false,
+  "evidence_source": "Research assumption: station-specific 95th percentile of river_level_max_m",
+  "evidence_column": "river_level_max_m",
+  "target_column": "flood_observed_research",
+  "class_mapping": {
+    "0": "No Flood",
+    "1": "Flood"
+  },
+  "threshold_rule": "station-specific 95th percentile calculated from oldest 80 percent of dates",
+  "training_cutoff_date": "2020-09-17T00:00:00",
+  "thresholds_m": {
+    "Ashti": 250.71749999999997,
+    "Betmogra": 353.59839999999997,
+    "Degloor": 353.059,
+    "Dhalegaon": 386.93695,
+    "G.R.BRIDGE": 365.545,
+    "Hivra": 232.61974999999998,
+    "Kanhargaon": 491.352,
+    "Kopergaon": 489.9112,
+    "Mangrul": 282.26149999999996,
+    "Nanded": 346.2962,
+    "Nandgaon": 205.02415000000002,
+    "P.G. Bridge": 204.7116,
+    "Pachegaon": 472.78,
+    "Purna": 358.615,
+    "Rajoli": 392.096,
+    "Salebardi": 228.3364,
+    "Tekra": 103.39,
+    "Wairagarh": 216.8615,
+    "Yelli": 346.009,
+    "Zari": 373.917
+  },
+  "warning": "This proxy is not an official flood-event label or emergency warning threshold."
+}

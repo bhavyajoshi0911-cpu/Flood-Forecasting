@@ -1,0 +1,58 @@
+{
+  "status": "warning",
+  "path": "C:\\Users\\DELL\\OneDrive\\Desktop\\Python Projects\\flood forcasting\\data\\raw",
+  "row_count": 947107,
+  "columns": [
+    "Agency",
+    "Basin",
+    "Block",
+    "Data Acquisition Time",
+    "District",
+    "District LGD Code",
+    "Is_DischargeDataAvailable",
+    "Latitude",
+    "Local River",
+    "Longitude",
+    "Manual Daily River Water Discharge (m3/sec)",
+    "MeanSeaLevel",
+    "RL_of_zeroGauge",
+    "River",
+    "River Water Level Telemetry Hourly (meter)",
+    "SlNo",
+    "State",
+    "State LGD Code",
+    "Station",
+    "SubSubtributary",
+    "Subtributary",
+    "Tehsil",
+    "Telemetry Hourly Rainfall (mm)",
+    "Tributary",
+    "Village"
+  ],
+  "source_files": [
+    "rainfall.basin",
+    "river.basin",
+    "riverdischarge.basin"
+  ],
+  "source_fingerprints": [
+    {
+      "filename": "rainfall.basin",
+      "size_bytes": 20693055,
+      "modified_time_ns": 1789637480620135700
+    },
+    {
+      "filename": "river.basin",
+      "size_bytes": 76171938,
+      "modified_time_ns": 1789637420686306300
+    },
+    {
+      "filename": "riverdischarge.basin",
+      "size_bytes": 48083099,
+      "modified_time_ns": 1789637560728093500
+    }
+  ],
+  "errors": [],
+  "warnings": [
+    "Raw .basin sources are detected; detailed CSV-schema validation is not applied."
+  ]
+}
