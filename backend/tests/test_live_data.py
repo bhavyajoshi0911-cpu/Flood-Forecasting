@@ -9,8 +9,9 @@ import live_data
 class FakeResponse:
     status_code = 200
 
-    def __init__(self, payload):
+    def __init__(self, payload, content=b"{}"):
         self.payload = payload
+        self.content = content
 
     def raise_for_status(self):
         return None
@@ -65,6 +66,12 @@ def test_api_timeout():
 def test_invalid_api_response():
     response = FakeResponse([])
     with pytest.raises(live_data.LiveDataError, match="response must be a JSON object"):
+        live_data.fetch_live_data(config(), FakeSession(response))
+
+
+def test_empty_api_response_reports_endpoint_configuration():
+    response = FakeResponse(None, content=b"")
+    with pytest.raises(live_data.LiveDataError, match="empty response.*query parameters"):
         live_data.fetch_live_data(config(), FakeSession(response))
 
 
@@ -152,3 +159,19 @@ def test_successful_live_data_prediction(monkeypatch):
     assert result["status"] == "success"
     assert result["prediction"] == "No Flood"
     assert result["flood_probability"] == 12.5
+
+
+def test_incomplete_provider_config_is_rejected_before_request(monkeypatch):
+    monkeypatch.setattr(live_data, "load_model_contract", lambda: (object(), {"feature_names": ["rainfall"]}))
+    provider_config = live_data.LiveDataConfig(
+        provider_url="https://provider.example/live",
+        api_key="",
+        field_mapping={},
+        expected_units={},
+    )
+    session = FakeSession(FakeResponse(payload()))
+
+    with pytest.raises(live_data.LiveDataError, match="configuration is incomplete"):
+        live_data.predict_live(provider_config, session)
+
+    assert session.request_kwargs is None

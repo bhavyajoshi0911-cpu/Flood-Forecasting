@@ -49,6 +49,10 @@ def _cached_basin_quality_report(
         isinstance(cached_report, dict)
         and cached_report.get("path") == str(RAW_DATA_DIRECTORY)
         and cached_report.get("source_fingerprints") == expected_fingerprints
+        and all(
+            field in cached_report
+            for field in ("invalid_timestamps", "duplicate_rows", "negative_rainfall")
+        )
     ):
         return cached_report
 

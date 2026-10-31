@@ -155,10 +155,13 @@ RISK_HIGH_THRESHOLD=0.70
 ```
 
 The feature names and provider fields above are examples only. Configure a
-mapping and expected unit for every required model feature. An API key is
-optional for providers that do not require authentication. The maximum
-observation age defaults to 24 hours; choose a limit suitable for the
-provider's reporting frequency.
+mapping and expected unit for every required model feature, and set
+`LIVE_DATA_STATION`. A generic weather endpoint such as Open-Meteo's forecast
+URL cannot directly supply this model's full river, discharge, lagged, rolling,
+and change feature vector. Use a provider or adapter that returns the complete
+contract below. An API key is optional for providers that do not require
+authentication. The maximum observation age defaults to 24 hours; choose a
+limit suitable for the provider's reporting frequency.
 
 The provider must return a JSON object in this general shape, with all mapped
 features included in `observations` and corresponding entries in `units`:

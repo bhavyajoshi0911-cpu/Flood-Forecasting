@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import csv
+from datetime import datetime
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -73,7 +75,7 @@ def load_raw_dataset(raw_directory: Path, filename: str | None = None) -> Loaded
 
 
 def summarize_basin_files(raw_directory: Path) -> dict[str, Any] | None:
-    """Count rows and collect headers from tab-separated basin source files."""
+    """Summarize tab-separated basin sources and validate their shared raw fields."""
 
     files = sorted(raw_directory.glob("*.basin"))
     if not files:
@@ -81,6 +83,11 @@ def summarize_basin_files(raw_directory: Path) -> dict[str, Any] | None:
 
     columns: set[str] = set()
     row_count = 0
+    invalid_timestamps = 0
+    duplicate_rows = 0
+    negative_rainfall = 0
+    has_timestamps = False
+    has_rainfall = False
     source_files: list[str] = []
     errors: list[str] = []
     source_fingerprints: list[dict[str, int | str]] = []
@@ -105,8 +112,42 @@ def summarize_basin_files(raw_directory: Path) -> dict[str, Any] | None:
                 if not header:
                     errors.append(f"{path.name} has no header row")
                     continue
-                columns.update(column.strip() for column in header if column.strip())
-                row_count += sum(1 for row in reader if any(cell.strip() for cell in row))
+                header = [column.strip() for column in header]
+                columns.update(column for column in header if column)
+                timestamp_column = next(
+                    (index for index, column in enumerate(header) if column.lower() == "data acquisition time"),
+                    None,
+                )
+                rainfall_column = next(
+                    (index for index, column in enumerate(header) if column.lower() == "telemetry hourly rainfall (mm)"),
+                    None,
+                )
+                has_timestamps = has_timestamps or timestamp_column is not None
+                has_rainfall = has_rainfall or rainfall_column is not None
+                seen_rows: set[bytes] = set()
+                for row in reader:
+                    if not any(cell.strip() for cell in row):
+                        continue
+                    row_count += 1
+                    fingerprint = hashlib.blake2b(
+                        "\x1f".join(row).encode("utf-8"),
+                        digest_size=16,
+                    ).digest()
+                    if fingerprint in seen_rows:
+                        duplicate_rows += 1
+                    else:
+                        seen_rows.add(fingerprint)
+                    if timestamp_column is not None:
+                        timestamp = row[timestamp_column].strip() if timestamp_column < len(row) else ""
+                        if not _is_valid_basin_timestamp(timestamp):
+                            invalid_timestamps += 1
+                    if rainfall_column is not None and rainfall_column < len(row):
+                        try:
+                            rainfall = float(row[rainfall_column].strip())
+                        except ValueError:
+                            continue
+                        if rainfall < 0:
+                            negative_rainfall += 1
         except (OSError, UnicodeDecodeError, csv.Error) as error:
             errors.append(f"Could not read {path.name}: {error}")
 
@@ -115,11 +156,28 @@ def summarize_basin_files(raw_directory: Path) -> dict[str, Any] | None:
         "path": str(raw_directory),
         "row_count": row_count,
         "columns": sorted(columns),
+        "invalid_timestamps": invalid_timestamps if has_timestamps else None,
+        "duplicate_rows": duplicate_rows,
+        "negative_rainfall": negative_rainfall if has_rainfall else None,
         "source_files": source_files,
         "source_fingerprints": source_fingerprints,
         "errors": errors,
-        "warnings": ["Raw .basin sources are detected; detailed CSV-schema validation is not applied."],
+        "warnings": ["Raw .basin sources are validated per source file; joined CSV-schema validation is not applied."],
     }
+
+
+def _is_valid_basin_timestamp(value: str) -> bool:
+    if not value:
+        return False
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return True
+    except ValueError:
+        try:
+            datetime.strptime(value, "%d-%m-%y %H:%M")
+            return True
+        except ValueError:
+            return False
 
 
 def load_metadata(metadata_path: Path) -> dict[str, Any]:

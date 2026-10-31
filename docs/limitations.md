@@ -14,4 +14,10 @@ are rejected rather than filled from held-out test data. Historical target
 labels are not predictions, and the application does not fabricate prediction
 history or alert records.
 
+The application can separately retrieve the Central Water Commission Flood
+Forecasting portal's public list of stations reported above warning level.
+That feed does not include source timestamps, units, station names, or basin
+mapping, and is not used as input to the local model. Verify station location
+and observation timing with the source before interpreting an entry.
+
 Potential limitations after data integration include station mismatch, missing observations, uncertain event labels, measurement errors, class imbalance, distribution shift, provider outages, stale readings, unsupported feature gaps, and threshold uncertainty. These must be reported with the relevant dataset, model, and API status.

@@ -35,6 +35,7 @@ async function post(path, body) {
 
 export function requestManualForecast(features) { return post("/forecast/manual", { features }); }
 export function requestLiveForecast() { return post("/forecast/live", {}); }
+export function getCwcWaterLevelAlerts() { return get("/live/cwc-water-level-alerts"); }
 export function getHistorical(filters = {}) { const query = new URLSearchParams({ page: filters.page || 1, page_size: 20 }); Object.entries(filters).forEach(([key, value]) => { if (value && key !== "page") query.set(key, value); }); return get(`/historical?${query.toString()}`); }
 export function getModelMetrics() { return get("/model/metrics"); }
 export function getPredictions(filters = {}) { const query = new URLSearchParams({ page: filters.page || 1, page_size: 20 }); Object.entries(filters).forEach(([key, value]) => { if (value && key !== "page") query.set(key, value); }); return get(`/predictions?${query.toString()}`); }

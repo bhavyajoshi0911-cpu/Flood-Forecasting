@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import desc
+from sqlalchemy.exc import SQLAlchemyError
 
+from app.database import get_session_factory, init_database
+from app.models.database_models import Prediction
 from app.ml.explain import ExplanationError, calculate_pipeline_shap
 from live_data import LiveDataError, predict_live
 from predict import PredictionError, predict_flood
@@ -23,6 +29,55 @@ MODEL_METADATA_PATH = PROJECT_ROOT / "backend" / "models" / "model_metadata.json
 
 class ForecastPayload(BaseModel):
     features: dict[str, Any] | None = None
+
+
+def _persist_prediction(
+    result: dict[str, Any],
+    input_features: dict[str, Any],
+    prediction_type: str,
+) -> int:
+    """Persist an actual model result with its input and model provenance."""
+
+    probability_percent = result.get("flood_probability")
+    prediction_value = result.get("prediction_value")
+    if probability_percent is None or prediction_value is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Forecast completed but cannot be recorded because its prediction class or probability is unavailable",
+        )
+    try:
+        prediction_value = int(prediction_value)
+        probability = float(probability_percent) / 100
+    except (TypeError, ValueError) as error:
+        raise HTTPException(status_code=500, detail="Forecast completed but its result could not be recorded") from error
+
+    if not 0 <= probability <= 1:
+        raise HTTPException(status_code=500, detail="Forecast completed but returned an invalid probability")
+
+    metadata = json.loads(MODEL_METADATA_PATH.read_text(encoding="utf-8"))
+    engine = init_database(os.getenv("DATABASE_URL") or f"sqlite:///{PROJECT_ROOT / 'backend' / 'flood_forecasting.db'}")
+    session = get_session_factory(engine)()
+    try:
+        record = Prediction(
+            timestamp=datetime.now(timezone.utc),
+            prediction_type=prediction_type,
+            input_features_json=json.dumps(input_features, allow_nan=False),
+            prediction=prediction_value,
+            probability=probability,
+            risk_label=str(result.get("risk_level") or result.get("prediction") or "unknown"),
+            model_version=str(result.get("model_name") or metadata.get("model_name") or "unknown"),
+            dataset_version=str(metadata.get("dataset_version") or "research-dataset"),
+            feature_version=f"model-features-v{metadata.get('number_of_features', len(metadata.get('feature_names', [])))}",
+            data_source=str(result.get("data_source") or prediction_type),
+        )
+        session.add(record)
+        session.commit()
+        return record.id
+    except (SQLAlchemyError, OSError, ValueError) as error:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Forecast completed but could not be recorded: {error}") from error
+    finally:
+        session.close()
 
 
 def _load_model_feature_names() -> list[str]:
@@ -57,7 +112,15 @@ def manual_forecast(payload: ForecastPayload) -> dict[str, Any]:
         if payload.features is None:
             raise HTTPException(status_code=400, detail="Request body must include a features object")
         result = predict_flood(payload.features)
-        return {"status": "success", "data_source": "manual", "timestamp": pd.Timestamp.now(tz="UTC").isoformat(), "explanation": _load_shap_summary([payload.features])["individual_values"][0], **result}
+        response = {
+            "status": "success",
+            "data_source": "manual",
+            "timestamp": pd.Timestamp.now(tz="UTC").isoformat(),
+            "explanation": _load_shap_summary([payload.features])["individual_values"][0],
+            **result,
+        }
+        response["prediction_id"] = _persist_prediction(response, payload.features, "manual")
+        return response
     except HTTPException:
         raise
     except PredictionError as error:
@@ -69,7 +132,15 @@ def manual_forecast(payload: ForecastPayload) -> dict[str, Any]:
 @router.post("/forecast/live")
 def live_forecast() -> dict[str, Any]:
     try:
-        return predict_live()
+        result = predict_live()
+        result["prediction_id"] = _persist_prediction(
+            result,
+            {"station_id": result.get("station_id"), "data_timestamp": result.get("timestamp")},
+            "live",
+        )
+        return result
+    except HTTPException:
+        raise
     except LiveDataError as error:
         raise HTTPException(status_code=503, detail=f"Live forecast unavailable: {error}") from error
     except Exception as error:  # pragma: no cover - defensive fallback
@@ -161,10 +232,126 @@ def shap_summary() -> dict[str, Any]:
 
 
 @router.get("/predictions")
-def predictions() -> dict[str, str]:
-    return {"status": "unavailable", "message": "Prediction history is not available yet"}
+def predictions(request: Request) -> dict[str, Any]:
+    page = max(int(request.query_params.get("page") or 1), 1)
+    page_size = min(max(int(request.query_params.get("page_size") or 20), 1), 100)
+    engine = init_database(os.getenv("DATABASE_URL") or f"sqlite:///{PROJECT_ROOT / 'backend' / 'flood_forecasting.db'}")
+    session = get_session_factory(engine)()
+    try:
+        query = session.query(Prediction).order_by(desc(Prediction.timestamp), desc(Prediction.id))
+        total = query.count()
+        records = query.offset((page - 1) * page_size).limit(page_size).all()
+        return {
+            "status": "success",
+            "records": [
+                {
+                    "id": record.id,
+                    "timestamp": (
+                        record.timestamp.replace(tzinfo=timezone.utc)
+                        if record.timestamp.tzinfo is None
+                        else record.timestamp
+                    ).isoformat(),
+                    "prediction_type": record.prediction_type,
+                    "risk_label": record.risk_label,
+                    "probability": record.probability,
+                    "data_source": record.data_source,
+                    "model_version": record.model_version,
+                }
+                for record in records
+            ],
+            "retrospective_records": _retrospective_test_predictions(),
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=500, detail=f"Prediction history could not be loaded: {error}") from error
+    finally:
+        session.close()
+
+
+def _retrospective_test_predictions() -> list[dict[str, Any]]:
+    """Run the saved model on held-out features without treating them as live requests."""
+
+    if not SAMPLE_FEATURES_PATH.is_file():
+        raise HTTPException(status_code=503, detail="Held-out test features are not available")
+    try:
+        features = pd.read_csv(SAMPLE_FEATURES_PATH)
+        if not {"year", "day_of_year", "Station"}.issubset(features.columns):
+            raise HTTPException(
+                status_code=503,
+                detail="Held-out test features do not contain the date and station fields required for history",
+            )
+        predictions_frame = predict_flood(features)
+        metadata = json.loads(MODEL_METADATA_PATH.read_text(encoding="utf-8"))
+    except HTTPException:
+        raise
+    except (OSError, ValueError, PredictionError) as error:
+        raise HTTPException(status_code=503, detail=f"Held-out test predictions are unavailable: {error}") from error
+
+    if not isinstance(predictions_frame, pd.DataFrame) or len(predictions_frame) != len(features):
+        raise HTTPException(status_code=503, detail="Model returned an invalid held-out test result")
+
+    years = pd.to_numeric(features["year"], errors="coerce")
+    days = pd.to_numeric(features["day_of_year"], errors="coerce")
+    if years.isna().any() or days.isna().any():
+        raise HTTPException(status_code=503, detail="Held-out test dates are invalid")
+    timestamps = pd.to_datetime(
+        years.astype(int).astype(str) + days.astype(int).astype(str).str.zfill(3),
+        format="%Y%j",
+        errors="coerce",
+    )
+    if timestamps.isna().any():
+        raise HTTPException(status_code=503, detail="Held-out test dates could not be decoded")
+
+    records: list[dict[str, Any]] = []
+    for index, prediction in enumerate(predictions_frame.to_dict(orient="records")):
+        probability_percent = prediction.get("flood_probability")
+        records.append(
+            {
+                "id": f"test-{index}",
+                "timestamp": timestamps.iloc[index].strftime("%Y-%m-%d"),
+                "station_id": str(features.iloc[index]["Station"]),
+                "prediction_type": "retrospective test",
+                "risk_label": prediction.get("risk_level") or prediction.get("prediction", "unknown"),
+                "probability": (
+                    float(probability_percent) / 100
+                    if probability_percent is not None and pd.notna(probability_percent)
+                    else None
+                ),
+                "data_source": "held-out test features",
+                "model_version": str(metadata.get("model_name", "saved model")),
+            }
+        )
+    return records
 
 
 @router.get("/alerts")
-def alerts() -> dict[str, str]:
-    return {"status": "unavailable", "message": "Alerts are not available yet"}
+def alerts() -> dict[str, Any]:
+    """Return current CWC-reported warning statuses as source-linked alerts."""
+
+    from .live import cwc_water_level_alerts
+
+    feed = cwc_water_level_alerts()
+    fetched_at = str(feed["fetched_at"])
+    return {
+        "status": "available",
+        "source": feed["source"],
+        "source_url": feed["source_url"],
+        "fetched_at": fetched_at,
+        "message": "CWC-reported station warning statuses; not generated by this project's model and not an emergency alert service.",
+        "alerts": [
+            {
+                "id": f"cwc-{item['station_code']}",
+                "severity": item["status"],
+                "message": f"Station {item['station_code']} is reported as {item['status'].lower()}"
+                + (f" and {item['trend'].lower()}" if item["trend"] else "")
+                + ".",
+                "created_at": fetched_at,
+                "station_code": item["station_code"],
+                "trend": item["trend"],
+                "source": feed["source"],
+            }
+            for item in feed["alerts"]
+        ],
+    }

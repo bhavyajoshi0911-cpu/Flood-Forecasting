@@ -103,6 +103,21 @@ def load_model_contract() -> tuple[Any, dict[str, Any]]:
         raise LiveDataError("Model metadata does not define a valid feature_names list")
     return model, metadata
 
+def validate_provider_config(config: LiveDataConfig, required_features: list[str]) -> None:
+    """Reject provider settings that cannot satisfy the model input contract."""
+
+    missing_mappings = [feature for feature in required_features if feature not in config.field_mapping]
+    missing_units = [feature for feature in required_features if feature not in config.expected_units]
+    issues = []
+    if not config.expected_station:
+        issues.append("expected station is not configured")
+    if missing_mappings:
+        issues.append(f"field mappings are missing for {len(missing_mappings)} of {len(required_features)} model features")
+    if missing_units:
+        issues.append(f"expected units are missing for {len(missing_units)} of {len(required_features)} model features")
+    if issues:
+        raise LiveDataError("Live-data provider configuration is incomplete: " + "; ".join(issues))
+
 
 def _parse_timestamp(value: Any) -> str:
     try:
@@ -131,6 +146,10 @@ def fetch_live_data(config: LiveDataConfig | None = None, session: requests.Sess
         if response.status_code == 429:
             raise LiveDataError("Live provider rate limit reached")
         response.raise_for_status()
+        if not response.content.strip():
+            raise LiveDataError(
+                "Live-data provider returned an empty response; verify the endpoint and its required query parameters"
+            )
         payload = response.json()
     except LiveDataError:
         LOGGER.warning("Live-data provider rejected the request")
@@ -228,6 +247,7 @@ def predict_live(config: LiveDataConfig | None = None, session: requests.Session
     _, metadata = load_model_contract()
     required_features = list(metadata["feature_names"])
     config = config or load_config()
+    validate_provider_config(config, required_features)
     raw_data = fetch_live_data(config, session)
     normalized = normalize_live_data(
         raw_data,

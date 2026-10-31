@@ -1,6 +1,6 @@
 import { Activity, Droplets, Gauge, RefreshCw, ShieldAlert, Waves } from "lucide-react";
 import { useEffect, useState } from "react";
-import { getShapSummary, getSystemStatus } from "./services/api.js";
+import { getCwcWaterLevelAlerts, getShapSummary, getSystemStatus } from "./services/api.js";
 import ForecastPage from "./pages/ForecastPage.jsx";
 import HistoricalPage from "./pages/HistoricalPage.jsx";
 import PerformancePage from "./pages/PerformancePage.jsx";
@@ -26,20 +26,32 @@ function App() {
   const [status, setStatus] = useState(emptyState);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [cwcFeed, setCwcFeed] = useState(null);
+  const [cwcError, setCwcError] = useState("");
   const [shapSummary, setShapSummary] = useState(null);
   const [shapError, setShapError] = useState("");
+
+  async function refreshCwcFeed() {
+    setCwcError("");
+    try {
+      setCwcFeed(await getCwcWaterLevelAlerts());
+    } catch (requestError) {
+      setCwcFeed(null);
+      setCwcError(requestError.message);
+    }
+  }
 
   async function refresh() {
     setLoading(true);
     setError("");
-    try {
-      setStatus(await getSystemStatus());
-    } catch (requestError) {
+    const [systemResult] = await Promise.allSettled([getSystemStatus(), refreshCwcFeed()]);
+    if (systemResult.status === "fulfilled") {
+      setStatus(systemResult.value);
+    } else {
       setStatus(emptyState);
-      setError(requestError.message);
-    } finally {
-      setLoading(false);
+      setError(systemResult.reason.message);
     }
+    setLoading(false);
   }
 
   useEffect(() => {
@@ -56,32 +68,22 @@ function App() {
   const modelMetrics = status.model?.metadata?.metrics ?? {};
   const rocAuc = modelMetrics["ROC-AUC"];
 
-  const heroTitle = !backendOnline
-    ? "Backend unavailable"
-    : !datasetReady
-      ? "Dataset unavailable"
-      : !modelReady
-        ? "Model unavailable"
-        : "Forecast not generated";
-
-  const heroDescription = !backendOnline
-    ? "The API is not responding; refresh to retry the connection."
-    : !datasetReady
-      ? "A valid raw dataset is required before any forecast can be generated."
-      : !modelReady
-        ? "The trained model metadata is missing or unreadable."
-        : "The model and source files are available, but a forecast needs a complete, validated feature vector. The trained target is a research assumption, not an official warning.";
+  const cwcAlertCount = cwcFeed?.total ?? null;
+  const heroTitle = cwcError
+    ? "CWC warning feed unavailable"
+    : cwcFeed
+      ? `${cwcAlertCount} station records in CWC feed`
+      : "Loading CWC warning feed";
+  const heroDescription = cwcError
+    ? "The official source could not be reached. Refresh to try again; no current model forecast is available."
+    : cwcFeed
+      ? `${cwcFeed.message} The CWC feed does not identify a Godavari-specific station set. This is separate from the local model, which has no forecast without a complete validated feature vector.`
+      : "Checking the Central Water Commission's public water-level warning feed. No result is a project model forecast.";
 
   const rainfallValue = datasetReady ? formatMetricValue(datasetRows, 0) : "--";
   const riverValue = modelReady ? `${status.model?.metadata?.training_rows ?? "--"}` : "--";
   const waterValue = modelReady ? `${status.model?.metadata?.testing_rows ?? "--"}` : "--";
   const topFeatures = shapFeatures.map((item) => item.feature).join(", ") || featureNames.slice(0, 3).join(", ") || "No feature metadata";
-  const latestConditionText = datasetReady
-    ? `${formatMetricValue(datasetRows, 0)} rows were read across the raw source files.`
-    : "No validated live observations are available.";
-  const latestConditionNote = datasetReady
-    ? "Source files are present; detailed schema and domain validation is still required."
-    : "Configure a verified provider after the trained feature contract is finalized.";
   const explainabilityText = modelReady
     ? "Feature signal available"
     : "SHAP explanation unavailable.";
@@ -119,12 +121,13 @@ function App() {
           <div><small>API</small><StatusPill online={backendOnline} /></div>
           <div><small>DATASET</small><StatusPill online={datasetReady} /></div>
           <div><small>MODEL</small><StatusPill online={modelReady} /></div>
+          <div><small>CWC FEED</small><StatusPill online={Boolean(cwcFeed)} /></div>
           <time>{new Date().toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" })}</time>
         </section>
 
         <section className="hero-panel">
-          <div><p className="eyebrow light">CURRENT FLOOD RISK</p><h2>{heroTitle}</h2><p>{heroDescription}</p></div>
-          <div className="hero-value">--<small>no current forecast</small></div>
+          <div><p className="eyebrow light">OFFICIAL CWC WARNING FEED · NOT A MODEL FORECAST</p><h2>{heroTitle}</h2><p>{heroDescription}</p></div>
+          <div className="hero-value">{cwcAlertCount == null ? "--" : formatMetricValue(cwcAlertCount)}<small>{cwcAlertCount == null ? "feed records unavailable" : "records reported by CWC"}</small></div>
         </section>
 
         <section className="metrics-grid">
@@ -135,7 +138,7 @@ function App() {
         </section>
 
         <section className="lower-grid">
-          <article className="panel"><div className="panel-heading"><div><p className="eyebrow">OBSERVATION FEED</p><h3>Source coverage</h3></div><span className="empty-tag">{datasetReady ? "SOURCE PRESENT" : "NO SOURCE"}</span></div><div className="empty-state"><Activity size={28} /><p>{latestConditionText}</p><small>{latestConditionNote}</small></div></article>
+          <article className="panel"><div className="panel-heading"><div><p className="eyebrow">LIVE SOURCE FEED</p><h3>CWC station warnings</h3></div><span className="empty-tag">{cwcFeed ? `${cwcFeed.total} RECORDS` : cwcError ? "UNAVAILABLE" : "LOADING"}</span></div>{cwcError ? <div className="empty-state"><Activity size={28} /><p>CWC warning feed unavailable</p><small>{cwcError}</small></div> : cwcFeed ? <><div className="cwc-dashboard-summary"><strong>{cwcFeed.total} station records</strong><small>{cwcFeed.message} The feed does not identify which stations are in the Godavari basin.</small></div>{cwcFeed.alerts.length ? <div className="contributor-list cwc-dashboard-list">{cwcFeed.alerts.map((alert) => <div className="contributor-row" key={alert.station_code}><span>{alert.station_code}</span><strong>{alert.status}{alert.trend ? ` · ${alert.trend.toLowerCase()}` : ""}</strong></div>)}</div> : <div className="empty-state"><p>No station warning records returned</p><small>An empty feed does not establish that there is no flood risk.</small></div>}<div className="cwc-dashboard-footer"><small>Retrieved {new Date(cwcFeed.fetched_at).toLocaleString()}. Source observation time and station mapping are unavailable.</small><a href={cwcFeed.source_url} target="_blank" rel="noreferrer">Open CWC feed</a></div></> : <div className="empty-state"><Activity size={28} /><p>Loading CWC warning records</p><small>Checking the official source feed.</small></div>}</article>
           <article className="panel" id="explainability"><div className="panel-heading"><div><p className="eyebrow">EXPLAINABILITY</p><h3>Top contributors</h3></div></div>{shapFeatures.length ? <div className="contributor-list">{shapFeatures.map((item) => <div className="contributor-row" key={item.feature}><span>{item.feature}</span><strong>{Number(item.mean_abs_shap).toFixed(3)}</strong></div>)}</div> : <div className="empty-state"><ShieldAlert size={28} /><p>{shapError ? "SHAP summary unavailable" : explainabilityText}</p><small>{shapError || explainabilityNote}</small></div>}</article>
         </section>
         <ForecastPage featureNames={featureNames} />
